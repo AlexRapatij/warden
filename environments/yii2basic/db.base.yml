@@ -1,0 +1,12 @@
+version: "3.5"
+services:
+  db:
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-yii2basic}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-yii2basic}
+      - MYSQL_USER=${MYSQL_USER:-yii2basic}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-yii2basic}
+    command:
+      - mysqld
+      - --max_allowed_packet=1024M
+      - --explicit_defaults_for_timestamp=on
