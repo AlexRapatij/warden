@@ -25,6 +25,7 @@ trap '' ERR
 if [[ -f "${WARDEN_HOME_DIR}/.env" ]]; then
   eval "$(sed 's/\r$//g' < "${WARDEN_HOME_DIR}/.env" | grep "^WARDEN_")"
 fi
+export WARDEN_GRAFANA_ENABLED="${WARDEN_GRAFANA_ENABLED:-1}"
 export WARDEN_IMAGE_REPOSITORY="${WARDEN_IMAGE_REPOSITORY:-"docker.io/wardenenv"}"
 
 export WARDEN_DOCKER_USERNS_MODE="${WARDEN_DOCKER_USERNS_MODE:-host}"
@@ -163,6 +164,7 @@ fi
 
 ## disconnect peered service containers from environment network
 if [[ "${WARDEN_PARAMS[0]}" == "down" ]]; then
+    syncAlloyProjectConfig remove
     disconnectPeeredServices "$(renderEnvNetworkName)"
 
     ## regenerate PMA config on each env changing
@@ -171,6 +173,7 @@ fi
 
 ## connect peered service containers to environment network
 if [[ "${WARDEN_PARAMS[0]}" == "up" ]]; then
+    syncAlloyProjectConfig add
     ## create environment network for attachments if it does not already exist
     if [[ $(docker network ls -f "name=$(renderEnvNetworkName)" -q) == "" ]]; then
         ${DOCKER_COMPOSE_COMMAND} \
@@ -189,6 +192,10 @@ if [[ "${WARDEN_PARAMS[0]}" == "up" ]]; then
 
     ## regenerate PMA config on each env changing
     regeneratePMAConfig
+fi
+
+if [[ "${WARDEN_PARAMS[0]}" == "start" ]]; then
+    syncAlloyProjectConfig add
 fi
 
 ## lookup address of traefik container on environment network
@@ -232,6 +239,7 @@ ${DOCKER_COMPOSE_COMMAND} \
 if [[ "${WARDEN_PARAMS[0]}" == "stop" || "${WARDEN_PARAMS[0]}" == "down" || \
       "${WARDEN_PARAMS[0]}" == "up" || "${WARDEN_PARAMS[0]}" == "start" ]]; then
     regeneratePMAConfig
+    restartAlloyServiceIfRunning
 fi
 
 ## resume mutagen sync if available and php-fpm container id hasn't changed

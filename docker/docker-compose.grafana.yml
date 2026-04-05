@@ -1,0 +1,50 @@
+services:
+  loki:
+    container_name: loki
+    image: grafana/loki:3.5.6
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ${WARDEN_SERVICE_DIR}/config/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    restart: ${WARDEN_RESTART_POLICY:-always}
+
+  alloy:
+    container_name: alloy
+    image: grafana/alloy:latest
+    command:
+      - run
+      - --storage.path=/tmp/alloy
+      - /etc/alloy/config.alloy
+    volumes:
+      - ${WARDEN_SERVICE_DIR}/config/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${WARDEN_HOME_DIR}/etc/alloy/targets:/etc/alloy/targets:ro
+      - alloy_data:/tmp
+      - ${WARDEN_DOCKER_SOCK}:/var/run/docker.sock
+    depends_on:
+      - loki
+    restart: ${WARDEN_RESTART_POLICY:-always}
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:12.1.0
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_INSTALL_PLUGINS=https://storage.googleapis.com/integration-artifacts/grafana-lokiexplore-app/grafana-lokiexplore-app-latest.zip;grafana-lokiexplore-app
+    volumes:
+      - ${WARDEN_SERVICE_DIR}/config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.tls=true
+      - traefik.http.routers.grafana.rule=Host(`grafana.${WARDEN_SERVICE_DOMAIN:-warden.test}`)
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+    restart: ${WARDEN_RESTART_POLICY:-always}
+
+volumes:
+  grafana_data:
+  loki_data:
+  alloy_data:
