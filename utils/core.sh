@@ -50,6 +50,10 @@ function getPeeredServices {
     services+=("phpmyadmin")
   fi
 
+  if [[ "${WARDEN_GRAFANA_ENABLED}" == 1 ]]; then
+    services+=("grafana")
+  fi
+
   echo "${services[@]}"
 }
 
