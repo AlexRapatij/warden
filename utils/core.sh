@@ -4,6 +4,7 @@
 ## global service containers to be connected with the project docker network
 ## Only non-disablable services should be listed here. Optioanl services should be handled in getPeeredServices
 DOCKER_PEERED_SERVICES=("traefik" "tunnel" "mailhog")
+DOCKER_OPTIONAL_PEERED_SERVICES=("phpmyadmin" "grafana")
 
 ## messaging functions
 function warning {
@@ -57,6 +58,10 @@ function getPeeredServices {
   echo "${services[@]}"
 }
 
+function getAllKnownPeeredServices {
+  echo "${DOCKER_PEERED_SERVICES[@]}" "${DOCKER_OPTIONAL_PEERED_SERVICES[@]}"
+}
+
 ## methods to peer global services requiring network connectivity with project networks
 function connectPeeredServices {
   enabledServices=($(getPeeredServices))
@@ -67,8 +72,8 @@ function connectPeeredServices {
 }
 
 function disconnectPeeredServices {
-  enabledServices=($(getPeeredServices))
-  for svc in ${enabledServices[@]}; do
+  knownServices=($(getAllKnownPeeredServices))
+  for svc in ${knownServices[@]}; do
     echo "Disconnecting ${svc} from $1 network"
     (docker network disconnect "$1" ${svc} 2>&1| grep -v 'is not connected') || true
   done
@@ -102,6 +107,16 @@ function regenerateAlloyComposeOverride() {
   local alloy_targets_dir
   local alloy_compose_file
   local mounts_found=0
+  local current_section=""
+  local line
+  local mount_entry
+  local volume_entry
+  local container_name
+  local volume_name
+  local volume_source
+  local volumes_from_entries=()
+  local volume_entries=()
+  local declared_named_volumes=()
 
   alloy_state_dir="$(getAlloyStateDir)"
   alloy_targets_dir="$(getAlloyTargetsDir)"
@@ -121,13 +136,67 @@ function regenerateAlloyComposeOverride() {
     return
   fi
 
+  for mounts_file in "${alloy_targets_dir}"/*.mounts.yml; do
+    [[ -f "${mounts_file}" ]] || continue
+
+    current_section=""
+    while IFS= read -r line; do
+      case "${line}" in
+        "    volumes_from:")
+          current_section="volumes_from"
+          ;;
+        "    volumes:")
+          current_section="volumes"
+          ;;
+        "      - "*)
+          if [[ "${current_section}" == "volumes_from" ]]; then
+            mount_entry="${line#      - }"
+            container_name="${mount_entry#container:}"
+            container_name="${container_name%:ro}"
+            if ! docker container inspect "${container_name}" >/dev/null 2>&1; then
+              continue
+            fi
+            if ! containsElement "${mount_entry}" "${volumes_from_entries[@]}"; then
+              volumes_from_entries+=("${mount_entry}")
+            fi
+          elif [[ "${current_section}" == "volumes" ]]; then
+            volume_entry="${line#      - }"
+            if ! containsElement "${volume_entry}" "${volume_entries[@]}"; then
+              volume_entries+=("${volume_entry}")
+              volume_source="${volume_entry%%:*}"
+              if [[ "${volume_source}" != /* ]] && [[ "${volume_source}" != .* ]] \
+                && ! containsElement "${volume_source}" "${declared_named_volumes[@]}"; then
+                declared_named_volumes+=("${volume_source}")
+              fi
+            fi
+          fi
+          ;;
+      esac
+    done < "${mounts_file}"
+  done
+
   {
     echo "services:"
     echo "  alloy:"
-    for mounts_file in "${alloy_targets_dir}"/*.mounts.yml; do
-      [[ -f "${mounts_file}" ]] || continue
-      cat "${mounts_file}"
-    done
+    if [[ ${#volumes_from_entries[@]} -gt 0 ]]; then
+      echo "    volumes_from:"
+      for mount_entry in "${volumes_from_entries[@]}"; do
+        echo "      - ${mount_entry}"
+      done
+    fi
+    if [[ ${#volume_entries[@]} -gt 0 ]]; then
+      echo "    volumes:"
+      for volume_entry in "${volume_entries[@]}"; do
+        echo "      - ${volume_entry}"
+      done
+    fi
+    if [[ ${#declared_named_volumes[@]} -gt 0 ]]; then
+      echo "volumes:"
+      for volume_name in "${declared_named_volumes[@]}"; do
+        echo "  ${volume_name}:"
+        echo "    external: true"
+      done
+    fi
   } > "${alloy_compose_file}"
 }
 
@@ -145,6 +214,7 @@ function writeAlloyProjectConfig() {
   local mounts_file
   local project_log_mount
   local project_log_source="host"
+  local project_appdata_mount
   local include_project_logs=0
   local raw_include_logs
   local include_logs
@@ -158,6 +228,8 @@ function writeAlloyProjectConfig() {
   local mount_name
   local mounted_parent
   local parent_paths=()
+  local parent_mount_names=()
+  local parent_index
 
   alloy_targets_dir="$(getAlloyTargetsDir)"
   mkdir -p "${alloy_targets_dir}"
@@ -169,8 +241,9 @@ function writeAlloyProjectConfig() {
   : > "${mounts_file}"
 
   if [[ ${WARDEN_MUTAGEN_ENABLE:-0} -eq 1 ]]; then
-    project_log_source="container"
-    project_log_mount="/var/www/html/var/log"
+    project_log_source="volume"
+    project_appdata_mount="/srv/warden-logs/${WARDEN_ENV_NAME}/appdata"
+    project_log_mount="${project_appdata_mount}/var/log"
   fi
 
   default_include_logs="${WARDEN_GRAFANA_INCLUDE_LOGS:-}"
@@ -200,12 +273,25 @@ EOF
 
     if [[ "${token}" == /* ]]; then
       source_path="${token}"
-      parent_path="$(dirname "${source_path}")"
-      if ! containsElement "${parent_path}" "${parent_paths[@]}"; then
-        parent_paths+=("${parent_path}")
+      if [[ "${source_path}" == /var/www/html/* ]]; then
+        source_path="${WARDEN_ENV_PATH}/${source_path#/var/www/html/}"
       fi
-      abs_index=$((abs_index + 1))
-      mount_name="abs_${abs_index}"
+      parent_path="$(dirname "${source_path}")"
+      parent_index=-1
+      for i in "${!parent_paths[@]}"; do
+        if [[ "${parent_paths[$i]}" == "${parent_path}" ]]; then
+          parent_index=$i
+          break
+        fi
+      done
+      if [[ ${parent_index} -eq -1 ]]; then
+        parent_paths+=("${parent_path}")
+        abs_index=$((abs_index + 1))
+        mount_name="abs_${abs_index}"
+        parent_mount_names+=("${mount_name}")
+      else
+        mount_name="${parent_mount_names[$parent_index]}"
+      fi
       mounted_parent="/srv/warden-logs/${WARDEN_ENV_NAME}/${mount_name}"
       mounted_path="${mounted_parent}/$(basename "${source_path}")"
       job_name="$(basename "${source_path}")"
@@ -230,10 +316,10 @@ EOF
   done
 
   if [[ ${include_project_logs} -eq 1 ]]; then
-    if [[ "${project_log_source}" == "container" ]]; then
+    if [[ "${project_log_source}" == "volume" ]]; then
       cat >> "${mounts_file}" <<EOF
-    volumes_from:
-      - container:${WARDEN_ENV_NAME}-nginx-1:ro
+    volumes:
+      - ${WARDEN_ENV_NAME}_appdata:${project_appdata_mount}:ro
 EOF
     else
       cat >> "${mounts_file}" <<EOF
@@ -243,10 +329,9 @@ EOF
     fi
   fi
 
-  abs_index=0
-  for parent_path in "${parent_paths[@]}"; do
-    abs_index=$((abs_index + 1))
-    mount_name="abs_${abs_index}"
+  for i in "${!parent_paths[@]}"; do
+    parent_path="${parent_paths[$i]}"
+    mount_name="${parent_mount_names[$i]}"
     mounted_parent="/srv/warden-logs/${WARDEN_ENV_NAME}/${mount_name}"
     if ! grep -q '^    volumes:$' "${mounts_file}" 2>/dev/null; then
       cat >> "${mounts_file}" <<EOF
@@ -276,7 +361,7 @@ function syncAlloyProjectConfig() {
 
 function restartAlloyServiceIfRunning() {
   if docker container inspect alloy >/dev/null 2>&1; then
-    "${WARDEN_BIN}" svc up -d alloy >/dev/null
+    "${WARDEN_BIN}" svc up -d alloy >/dev/null 2>&1
   fi
 }
 

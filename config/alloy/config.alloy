@@ -77,7 +77,7 @@ loki.process "project_files" {
     selector = "{job=~\".+\"} |= \"context:{\" |= \"}:context []\""
 
     stage.regex {
-      expression = ".*context:(?P<ctx>\\{.*\\}):context \\[\\]$"
+      expression = ".*context:(?P<ctx>\\{[^\\n]*\\})\\s*:context \\[\\]\\s*$"
     }
 
     stage.json {
@@ -90,13 +90,75 @@ loki.process "project_files" {
 
     stage.labels {
       values = {
-        code       = null,
+        code = "",
       }
     }
 
     stage.structured_metadata {
       values = {
-        amp_correlation_id = null,
+        amp_correlation_id = "",
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{job=~\".+\"} |= \"context:[]:context {\""
+
+    stage.regex {
+      expression = ".*context:\\[\\]\\s*:context\\s+(?P<ctx>\\{[^\\n]*\\})\\s*$"
+    }
+
+    stage.json {
+      source = "ctx"
+      expressions = {
+        amp_correlation_id = "",
+        code               = "",
+      }
+    }
+
+    stage.labels {
+      values = {
+        code = "",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        amp_correlation_id = "",
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{job=~\".+\"} |= \"context:{\" |= \"}:context {\""
+
+    stage.regex {
+      expression = ".*context:(?P<ctx>\\{[^\\n]*\\})\\s*:context\\s+(?P<meta>\\{[^\\n]*\\})\\s*$"
+    }
+
+    stage.json {
+      source = "ctx"
+      expressions = {
+        code = "",
+      }
+    }
+
+    stage.json {
+      source = "meta"
+      expressions = {
+        amp_correlation_id = "",
+      }
+    }
+
+    stage.labels {
+      values = {
+        code = "",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        amp_correlation_id = "",
       }
     }
   }
