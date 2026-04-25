@@ -1,0 +1,183 @@
+discovery.docker "docker" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "docker" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "warden"
+    action        = "drop"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/([^-]+|.+-.+)-(elasticsearch|elasticsearch-hq|php-fpm|nginx|redis|varnish|php-debug|rabbitmq|db|opensearch)-1"
+    action        = "drop"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_dev_warden_environment_name"]
+    target_label  = "warden_environment"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "job"
+  }
+}
+
+loki.process "docker" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.docker { }
+}
+
+loki.source.docker "docker" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.docker.targets
+  relabel_rules    = discovery.relabel.docker.rules
+  refresh_interval = "5s"
+  forward_to       = [loki.process.docker.receiver]
+}
+
+discovery.file "project_files" {
+  files            = ["/etc/alloy/targets/*.targets.yml"]
+  refresh_interval = "5s"
+}
+
+loki.process "project_files" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.match {
+    selector = "{job=~\".+\"} |= \"context:{\" |= \"}:context []\""
+
+    stage.regex {
+      expression = ".*context:(?P<ctx>\\{[^\\n]*\\})\\s*:context \\[\\]\\s*$"
+    }
+
+    stage.json {
+      source = "ctx"
+      expressions = {
+        amp_correlation_id = "",
+        code               = "",
+      }
+    }
+
+    stage.labels {
+      values = {
+        code = "",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        amp_correlation_id = "",
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{job=~\".+\"} |= \"context:[]:context {\""
+
+    stage.regex {
+      expression = ".*context:\\[\\]\\s*:context\\s+(?P<ctx>\\{[^\\n]*\\})\\s*$"
+    }
+
+    stage.json {
+      source = "ctx"
+      expressions = {
+        amp_correlation_id = "",
+        code               = "",
+      }
+    }
+
+    stage.labels {
+      values = {
+        code = "",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        amp_correlation_id = "",
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{job=~\".+\"} |= \"context:{\" |= \"}:context {\""
+
+    stage.regex {
+      expression = ".*context:(?P<ctx>\\{[^\\n]*\\})\\s*:context\\s+(?P<meta>\\{[^\\n]*\\})\\s*$"
+    }
+
+    stage.json {
+      source = "ctx"
+      expressions = {
+        code = "",
+      }
+    }
+
+    stage.json {
+      source = "meta"
+      expressions = {
+        amp_correlation_id = "",
+      }
+    }
+
+    stage.labels {
+      values = {
+        code = "",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        amp_correlation_id = "",
+      }
+    }
+  }
+}
+
+loki.source.file "project_files" {
+  targets               = discovery.file.project_files.targets
+  forward_to            = [loki.process.project_files.receiver]
+  legacy_positions_file = "/tmp/positions.yml"
+
+  file_match {
+    enabled = true
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+
+  external_labels = {}
+}

@@ -23,6 +23,8 @@ if [[ -f "${WARDEN_HOME_DIR}/.env" ]]; then
     eval "$(grep "^WARDEN_DNSMASQ_ENABLE" "${WARDEN_HOME_DIR}/.env")"
     # Check Portainer
     eval "$(grep "^WARDEN_PORTAINER_ENABLE" "${WARDEN_HOME_DIR}/.env")"
+    # Check Grafana stack
+    eval "$(grep "^WARDEN_GRAFANA_ENABLED" "${WARDEN_HOME_DIR}/.env")"
 
     # Check Docker socket
     eval "$(grep "^WARDEN_DOCKER_SOCK" "${WARDEN_HOME_DIR}/.env")"
@@ -46,6 +48,18 @@ WARDEN_PORTAINER_ENABLE="${WARDEN_PORTAINER_ENABLE:-0}"
 if [[ "${WARDEN_PORTAINER_ENABLE}" == 1 ]]; then
     DOCKER_COMPOSE_ARGS+=("-f")
     DOCKER_COMPOSE_ARGS+=("${WARDEN_DIR}/docker/docker-compose.portainer.yml")
+fi
+
+WARDEN_GRAFANA_ENABLED="${WARDEN_GRAFANA_ENABLED:-1}"
+if [[ "${WARDEN_GRAFANA_ENABLED}" == 1 ]]; then
+    regenerateAlloyTargets
+    regenerateAlloyComposeOverride
+    DOCKER_COMPOSE_ARGS+=("-f")
+    DOCKER_COMPOSE_ARGS+=("${WARDEN_DIR}/docker/docker-compose.grafana.yml")
+    if [[ -f "${WARDEN_HOME_DIR}/etc/alloy/docker-compose.yml" ]]; then
+        DOCKER_COMPOSE_ARGS+=("-f")
+        DOCKER_COMPOSE_ARGS+=("${WARDEN_HOME_DIR}/etc/alloy/docker-compose.yml")
+    fi
 fi
 
 WARDEN_PHPMYADMIN_ENABLE="${WARDEN_PHPMYADMIN_ENABLE:-1}"

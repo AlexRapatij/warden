@@ -91,6 +91,8 @@ if [[ ! -f "${WARDEN_HOME_DIR}/.env" ]]; then
 	cat >> "${WARDEN_HOME_DIR}/.env" <<-EOT
 		# Set to "1" to enable global Portainer service
 		WARDEN_PORTAINER_ENABLE=0
+		# Set to "1" to enable global Grafana + Loki + Alloy services
+		WARDEN_GRAFANA_ENABLED=1
 		# Set to "0" to disable DNSMasq
 		WARDEN_DNSMASQ_ENABLE=1
 		# Set to "0" to disable phpMyAdmin
